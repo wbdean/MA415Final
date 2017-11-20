@@ -1,0 +1,149 @@
+---
+title: "US Fire Data -- MA415 Final Project"
+author: "William Dean"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    theme: united
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(knitr)
+library(foreign)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+```
+
+# Objective
+
+There was a lot of information in the fire data sets so I wanted to narrow down and just consider a few topics which I thought would be interesting. I wanted to consider the dispatch time, how fast fire department are able to respond to accidents. I also wanted to compare accidents that do have fatalities with accidents which do not. To consider if these areas of interest have changed over time, I used the fire data from 2007 and from 2015. I thought that this would allow enough change in time to see changes in the dispatches and the accident fatalities.
+
+
+```{r echo=FALSE}
+F2007 <- read.csv("Fires2007.csv")
+F2015 <- read.csv("Fires2015.csv")
+```
+
+# Data Preparation
+
+Before diving into the exploration and any analysis, the fire data had to be prepped. I kept any attributes which I believed would be meaningful in order to explore dispatch time as well as fatal and non-fatal accidents. In the end, I had a table which looked like this:
+
+```{r echo = FALSE, fig.align='center'}
+kable(head(F2015[,2:], 3), format = "markdown")
+```
+```{r echo = FALSE, fig.align='center'}
+kable(head(F2015[,-c(1:14,30,31)], 3), format = "markdown")
+```
+```{r echo = FALSE, fig.align='center'}
+kable(head(F2015[,c(30,31)], 3), format = "markdown")
+```
+
+
+These attributes include information about time of accident, time of year, dispatch time, how much property loss, if anyone died in the accident, and what were the causes of fire and how intense it was like. This data frame allowed me to progress and begin answering the questions I had.
+
+# Dispatch Time
+
+I thought that it would be interesting to see how dispatch time changes both across the county but also if there has been any change between 2007 and 2015.
+
+Consider first the histograms of the dispatch time for the whole country for both 2007 and 2015.
+
+```{r echo = FALSE, message = FALSE, warning=FALSE }
+T2007 <- F2007 %>% filter(TIME > 0 & TIME < 30) %>% mutate(Year = 2007) %>% select(Year, TIME)
+T2015 <- F2015 %>% filter(TIME > 0 & TIME < 30) %>% mutate(Year = 2015) %>% select(Year, TIME)
+Time <- bind_rows(T2007, T2015)
+Time$Year <- as.factor(Time$Year)
+ggplot(Time, aes(TIME, fill = Year)) + geom_histogram(aes(y = ..density..)) + facet_wrap(~Year) +
+    ggtitle("Histogram of Dispatch Time 2007 vs 2015")
+```
+
+These two distribution seem to be similar enough to think that country distribution may have not changed from 2007 to 2015.
+
+Instead of looking at differences over time, let's look at the distribution from different states. Consider the distributions for dispatch time for Pennsylvania vs West Virginia from 2015
+
+```{r echo=FALSE, message=FALSE}
+ggplot(F2015 %>% filter((STATE == "PA" | STATE == "WV") & TIME > 0 & TIME < 30), aes(TIME, fill = STATE)) + geom_histogram(aes(y = ..density..)) + facet_wrap(~STATE) + ggtitle("Dispatch Distribution in PA vs WV")
+```
+```{r echo = FALSE}
+kable(F2015 %>% filter((STATE == "PA" | STATE == "WV") & TIME > 0 & TIME < 30) %>% group_by(STATE) %>% summarise(mean = mean(TIME, na.rm = TRUE), sd = sd(TIME), median = median(TIME, na.rm = TRUE)),format="markdown")
+```
+
+From the densities and the summary statistics, it seems as though different states will have different distributions. The distributions hold similar shape, but mean and spread has a lot more variation between states. The states' distributions seem to be from the same family of distribution but could have different parameters. 
+
+To look at central tendencies of all the states, consider the map below. There seems to be different means clustered in different regions. Region may influence the distribution of dispatch time. Notice how many of the east coast states have lower averages than midwest states. Regional differences in landscape or placement of fire departments may account for this observation.
+
+```{r echo = FALSE, message=FALSE, warning=FALSE}
+
+us <- map_data("state")
+
+time <- F2015
+
+time$STATE <- tolower(time$STATE)
+            states <- as.data.frame(cbind(tolower(state.abb), state.name))
+            
+            time <- left_join(time, states, by = c("STATE" = "V1"))
+            time <- time %>% select(-STATE)
+            time <- time %>% filter(TIME <= 30 & TIME >= 0) %>% group_by(state.name) %>% summarise(mean = mean(TIME, na.rm = T))
+            time$state.name <- tolower(time$state.name)
+            
+gg <- ggplot()
+       gg <- gg + geom_map(data=us, map=us,
+                           aes(x=long, y=lat, map_id=region),
+                           fill="#ffffff", color="#ffffff", size=0.15)
+       
+       gg <- gg + geom_map(data=time, map=us,
+                           aes(fill=mean, map_id=state.name),
+                           color="#ffffff", size=0.15)
+       gg <- gg + scale_fill_continuous(low='thistle2', high='darkred', 
+                                        guide='colorbar')
+       gg <- gg + labs(x=NULL, y=NULL)
+       gg <- gg + coord_map("albers", lat0 = 39, lat1 = 45) 
+       gg <- gg + theme(panel.border = element_blank())
+       gg <- gg + theme(panel.background = element_blank())
+       gg <- gg + theme(axis.ticks = element_blank())
+       gg <- gg + theme(axis.text = element_blank()) +
+           ggtitle(paste("State Dispatch Averages")) +
+           theme(plot.title = element_text(lineheight=.8, face="bold", size = 20))
+       gg
+```
+
+
+# Fatal vs Non-Fatal Accidents
+
+One element of Accidents I wanted to explore was whether knowing there was a death in an accident could tell about the severity of a fire but also if the severity of the fire could tell if there is a death.
+
+To approach this, I first separated accidents into accidents with and without deaths and considered the severity of the fire. Below is a graphic that illustrates this from the 2015 fires. It seems to appear that when there is a death, there will be a higher chance of a fire that will spread beyond just the room. This can be seen from the bigger proportions of higher fire spread when there is a death compared to no death. Also, it seems as though accidents with no deaths tend to be smaller fires then compared to accidents with deaths.
+
+```{r echo = FALSE}
+ggplot(na.omit(F2015), aes(DEATH, fill = FIRESPRD)) + geom_bar() + facet_wrap(~DEATH, scale = "free") +
+    ggtitle("Severity of Fire in 2015 Fatal and Non-Fatal Accidents")
+```
+
+We can also consider if the size of the fire is able to give insight to if there is a death. Looking again at 2015 Fire Data, it appears that as the spread of the fire increasing, the probability that there is a death in the accident increases. For example, when the fire spreads further than the room, the probability of a death is higher than when the fire is contained to a single room.
+
+```{r echo = FALSE}
+ggplot(na.omit(F2015), aes(FIRESPRD, fill = DEATH)) + geom_bar() + facet_wrap(~FIRESPRD, scale = "free") +
+    ggtitle("Deaths in 2015 Fires with varying Fire Severity")
+```
+
+
+After considering both dispatch time and fatal/non-fatal accidents, let's see if there dispatch time can give any insight about whether or not an accidnet was fatal.
+
+```{r echo = FALSE, message=FALSE}
+ggplot(na.omit(F2015) %>% filter(TIME > 0 & TIME < 30), aes(TIME, fill = DEATH)) + geom_histogram(aes(y = ..density..)) + facet_wrap(~DEATH) + 
+    ggtitle("Density of Dispatch Time of Fatal and Non-Fatal Accidents")
+```
+
+The density of dispatch time of fire accidents seems nearly identitical when it is a fatal fire as when there isn't a fire. From this, dispatch time doesn't seem to impact if there will be a death in an accident.
+
+# Conclusion
+
+The data needed to be cleaned in order to explore questions about dispatch time as well as about fatal and non-fatal accidents.
+
+There does not seem to be a change in distribution between 2007 and 2015 for the dispatch time, however there does seem to be differences between different states throughout the country. The distribution for individual states are similar in shape but have different spread which makes it likely to be from different distributions. When looking at averages across the country, we were able to notice clustering of higher averages in different regions across the country.
+
+When looking into fatal and non-fatal accidents, we were able to graphically see the relationship between fire spread and deaths. The conditional probability of death given fire spread seems to increase as firespread increases in size. Also, the probability of death looks to increase as the size of the fire spread increases. Dipatch time doesn't seem to give us insight about if there was a fatality in a fire.
